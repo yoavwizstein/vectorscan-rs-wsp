@@ -1,0 +1,22 @@
+diff --git a/src/dispatcher.c b/src/dispatcher.c
+index a07e943e..08c8d615 100644
+--- a/src/dispatcher.c
++++ b/src/dispatcher.c
+@@ -98,7 +98,7 @@
+     /* dispatch routing pointer for this function */                           \
+     /* initially point it at the resolve function */                           \
+     static RTYPE JOIN(resolve_, NAME)(__VA_ARGS__);                            \
+-    static RTYPE (* JOIN(fat_dispatch_, NAME))(__VA_ARGS__) =                  \
++    __attribute__((visibility("hidden"))) RTYPE (* JOIN(fat_dispatch_, NAME))(__VA_ARGS__) =                  \
+         &JOIN(resolve_, NAME);                                                 \
+                                                                                \
+     /* resolver */                                                             \
+@@ -143,7 +143,7 @@
+     /* dispatch routing pointer for this function */                           \
+     /* initially point it at the resolve function */                           \
+     static RTYPE JOIN(resolve_, NAME)(__VA_ARGS__);                            \
+-    static RTYPE (* JOIN(fat_dispatch_, NAME))(__VA_ARGS__) =                  \
++    __attribute__((visibility("hidden"))) RTYPE (* JOIN(fat_dispatch_, NAME))(__VA_ARGS__) =                  \
+         &JOIN(resolve_, NAME);                                                 \
+                                                                                \
+     /* resolver */                                                             \

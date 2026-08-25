@@ -8,7 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ## Unreleased
 
 ### Changes
-- Upgraded vendored version of Vectorscan from 5.4.11 to 5.4.12 ([#11](https://github.com/bradlarsen/vectorscan-rs/pull/11)).
+- Upgraded vendored version of Vectorscan from 5.4.11 to 5.4.13. Dropped the local patches that 5.4.13 upstreams (static fat-runtime dispatch, non-Linux/ifunc fat runtime, pkg-config extra libs and quiet, and the double-shufti end-of-data fix) and rebased `msvc-support.patch` onto 5.4.13 (the `teddy_avx2.c` alignment hunk is obsolete after the SuperVector refactor).
 
 
 ## [v0.0.5](https://github.com/bradlarsen/vectorscan-rs/releases/v0.0.5) (2024-12-09)

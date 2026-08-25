@@ -1,42 +1,8 @@
-MSVC (clang-cl) support for Vectorscan 5.4.11.
-
-Applied after the 01-05 backports:
-  * src/ue2common.h    - guard the alignof macro to C only
-  * src/util/alloc.cpp - free _aligned_malloc memory with _aligned_free
-  * CMakeLists.txt     - MSVC fat-runtime COFF symbol rename (cmake/fat_rename.ps1)
-  * CMakeLists.txt     - build the Ragel parser unsigned-char under clang-cl (-Xclang -fno-signed-char)
-  * src/fdr/teddy_avx2.c - declare p_mask_interleave ALIGN_CL_DIRECTIVE (64) to match its aligned
-                           vmovdqa64 load; fixes an AVX-512-VBMI #GP (0xC0000005) where clang-cl honors
-                           the under-declared 32-byte alignment. (Folded in from the former 06-teddy patch.)
-diff --git a/src/ue2common.h b/src/ue2common.h
---- a/src/ue2common.h
-+++ b/src/ue2common.h
-@@ -92,5 +92,7 @@
- /** no, seriously, inline it, even if building in debug mode */
- #define really_really_inline inline __attribute__ ((always_inline, unused))
- #define never_inline __attribute__ ((noinline))
--#define alignof __alignof
-+#if !defined(__cplusplus)
-+#define alignof __alignof
-+#endif
- #define HAVE_TYPEOF 1
-diff --git a/src/util/alloc.cpp b/src/util/alloc.cpp
---- a/src/util/alloc.cpp
-+++ b/src/util/alloc.cpp
-@@ -87,6 +87,8 @@ void aligned_free_internal(void *ptr) {
-
- #if defined(__MINGW32__) || defined(__MINGW64__)
-     __mingw_aligned_free(ptr);
-+#elif defined(HAVE__ALIGNED_MALLOC)
-+    _aligned_free(ptr);
- #else
-     free(ptr);
- #endif
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index a11670e..7ab649d 100644
+index add54a48..8ffc210f 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
-@@ -192,6 +192,13 @@ if (CORRECT_PCRE_VERSION AND PCRE_BUILD_SOURCE AND BUILD_STATIC_LIBS)
+@@ -214,6 +214,13 @@ if (CORRECT_PCRE_VERSION AND PCRE_BUILD_SOURCE AND BUILD_STATIC_LIBS)
  endif()
  
  set(RAGEL_C_FLAGS "-Wno-unused -funsigned-char")
@@ -50,34 +16,10 @@ index a11670e..7ab649d 100644
  
  set_source_files_properties(
      src/parser/Parser.cpp
-@@ -962,6 +962,23 @@ else ()
-                     )
-             endif (BUILD_AVX512VBMI)
- 
-+            if (MSVC)
-+                find_program(POWERSHELL_EXE NAMES powershell pwsh REQUIRED)
-+                foreach (fatv core2 corei7 avx2 avx512 avx512vbmi)
-+                    if (TARGET hs_exec_${fatv})
-+                        set_target_properties(hs_exec_${fatv} PROPERTIES RULE_LAUNCH_COMPILE "")
-+                        add_custom_target(rename_hs_exec_${fatv} ALL
-+                            COMMAND ${POWERSHELL_EXE} -NoProfile -ExecutionPolicy Bypass -File ${PROJECT_SOURCE_DIR}/cmake/fat_rename.ps1
-+                                    ${fatv} ${CMAKE_MODULE_PATH}/keep.syms.in
-+                                    ${CMAKE_BINARY_DIR}/CMakeFiles/hs_exec_${fatv}.dir
-+                            COMMENT "COFF symbol rename for ${fatv} fat-runtime variant"
-+                            VERBATIM)
-+                        add_dependencies(rename_hs_exec_${fatv} hs_exec_${fatv})
-+                        set_property(GLOBAL APPEND PROPERTY FAT_RENAME_TARGETS rename_hs_exec_${fatv})
-+                    endif()
-+                endforeach()
-+            endif()
-+
-             add_library(hs_exec_common OBJECT
-                 ${hs_exec_common_SRCS}
-                 src/dispatcher.c
-@@ -1215,3 +1238,12 @@ if(BUILD_BENCHMARKS)
+@@ -1217,3 +1224,12 @@ option(BUILD_DOC "Build the Hyperscan documentation (default TRUE)" TRUE)
+ if(BUILD_DOC)
+     add_subdirectory(doc/dev-reference)
  endif()
- 
- add_subdirectory(doc/dev-reference)
 +
 +if (MSVC AND FAT_RUNTIME)
 +    get_property(_fat_rename_targets GLOBAL PROPERTY FAT_RENAME_TARGETS)
@@ -87,17 +29,64 @@ index a11670e..7ab649d 100644
 +        endif()
 +    endforeach()
 +endif()
-
-diff --git a/src/fdr/teddy_avx2.c b/src/fdr/teddy_avx2.c
-index e17e7872..b93fe0d8 100644
---- a/src/fdr/teddy_avx2.c
-+++ b/src/fdr/teddy_avx2.c
-@@ -168,7 +168,7 @@ const m256 *getMaskBase_fat(const struct Teddy *teddy) {
+diff --git a/cmake/build_wrapper.cmake b/cmake/build_wrapper.cmake
+index 80ea722f..62c716fc 100644
+--- a/cmake/build_wrapper.cmake
++++ b/cmake/build_wrapper.cmake
+@@ -1,9 +1,24 @@
+ function(add_fat_component component objects compile_flags sources isPIC)
+     set(BUILD_WRAPPER "${PROJECT_SOURCE_DIR}/cmake/build_wrapper.sh")
+     add_library(${objects} OBJECT ${sources})
+-    set_target_properties(${objects} PROPERTIES
+-        COMPILE_FLAGS "${compile_flags}"
+-	POSITION_INDEPENDENT_CODE ${isPIC}
+-        RULE_LAUNCH_COMPILE "${BUILD_WRAPPER} ${component} ${CMAKE_MODULE_PATH}/keep.syms.in"
+-        )
++    if (MSVC)
++        set_target_properties(${objects} PROPERTIES
++            COMPILE_FLAGS "${compile_flags}"
++            POSITION_INDEPENDENT_CODE ${isPIC})
++        find_program(POWERSHELL_EXE NAMES powershell pwsh REQUIRED)
++        add_custom_target(rename_${objects} ALL
++            COMMAND ${POWERSHELL_EXE} -NoProfile -ExecutionPolicy Bypass -File
++                    ${PROJECT_SOURCE_DIR}/cmake/fat_rename.ps1
++                    ${component} ${CMAKE_MODULE_PATH}/keep.syms.in
++                    ${CMAKE_BINARY_DIR}/CMakeFiles/${objects}.dir
++            COMMENT "COFF symbol rename for ${component} fat-runtime variant"
++            VERBATIM)
++        add_dependencies(rename_${objects} ${objects})
++        set_property(GLOBAL APPEND PROPERTY FAT_RENAME_TARGETS rename_${objects})
++    else ()
++        set_target_properties(${objects} PROPERTIES
++            COMPILE_FLAGS "${compile_flags}"
++            POSITION_INDEPENDENT_CODE ${isPIC}
++            RULE_LAUNCH_COMPILE "${BUILD_WRAPPER} ${component} ${CMAKE_MODULE_PATH}/keep.syms.in")
++    endif ()
+ endfunction()
+diff --git a/src/ue2common.h b/src/ue2common.h
+index 525fb26c..99c6851d 100644
+--- a/src/ue2common.h
++++ b/src/ue2common.h
+@@ -92,7 +92,9 @@ typedef u32 ReportID;
+ /** no, seriously, inline it, even if building in debug mode */
+ #define really_really_inline inline __attribute__ ((always_inline, unused))
+ #define never_inline __attribute__ ((noinline))
++#if !defined(__cplusplus)
+ #define alignof __alignof
++#endif
+ #define HAVE_TYPEOF 1
  
- #if defined(HAVE_AVX512VBMI) // VBMI strong fat teddy
  
--const u8 ALIGN_AVX_DIRECTIVE p_mask_interleave[64] = {
-+const u8 ALIGN_CL_DIRECTIVE p_mask_interleave[64] = {
-     0, 32, 1, 33, 2, 34, 3, 35, 4, 36, 5, 37, 6, 38, 7, 39,
-     8, 40, 9, 41, 10, 42, 11, 43, 12, 44, 13, 45, 14, 46, 15, 47,
-     16, 48, 17, 49, 18, 50, 19, 51, 20, 52, 21, 53, 22, 54, 23, 55,
+diff --git a/src/util/alloc.cpp b/src/util/alloc.cpp
+index 651fb164..39fc544b 100644
+--- a/src/util/alloc.cpp
++++ b/src/util/alloc.cpp
+@@ -88,6 +88,8 @@ void aligned_free_internal(void *ptr) {
+ 
+ #if defined(__MINGW32__) || defined(__MINGW64__)
+     __mingw_aligned_free(ptr);
++#elif defined(HAVE__ALIGNED_MALLOC)
++    _aligned_free(ptr);
+ #else
+     free(ptr);
+ #endif
