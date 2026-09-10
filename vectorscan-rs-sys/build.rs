@@ -52,6 +52,34 @@ fn resolve_submodule_head(submodule_dir: &Path) -> Option<PathBuf> {
     head.exists().then_some(head)
 }
 
+/// Link `target` (a `boost/` header directory) into place at `link`.
+///
+/// Creating a symlink on Windows needs either elevation or developer mode, so
+/// use a directory junction there. These are host cfgs, not target cfgs:
+/// cross-compiling to `*-pc-windows-msvc` from a Unix host is supported, and
+/// such a host has neither `cmd.exe` nor junctions.
+fn link_boost_dir(link: &Path, target: &Path) {
+    #[cfg(windows)]
+    {
+        let status = Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(link)
+            .arg(target)
+            .status()
+            .expect("Failed to run mklink for boost junction");
+        assert!(status.success(), "mklink /J for boost junction failed");
+    }
+
+    #[cfg(not(windows))]
+    std::os::unix::fs::symlink(target, link).unwrap_or_else(|e| {
+        panic!(
+            "Failed to symlink {} -> {}: {e}",
+            link.display(),
+            target.display()
+        )
+    });
+}
+
 fn build_vectorscan(manifest_dir: &Path, out_dir: &Path, is_windows_msvc: bool) {
     let include_dir = out_dir
         .join("include")
@@ -217,20 +245,14 @@ fn build_vectorscan(manifest_dir: &Path, out_dir: &Path, is_windows_msvc: bool) 
             "VECTORSCAN_BOOST_INCLUDE ({}) must contain boost/version.hpp",
             boost_include
         );
-        // Junction only boost/ into a private include dir OUTSIDE the source tree
+        // Link only boost/ into a private include dir OUTSIDE the source tree
         // (build.rs wipes vectorscan-src each run) and point BOOST_ROOT at it.
         let boost_root = out_dir.join("boost-root");
         let boost_link = boost_root.join("include").join("boost");
         if !boost_link.exists() {
             fs::create_dir_all(boost_root.join("include"))
                 .expect("Failed to create boost-root/include");
-            let status = Command::new("cmd")
-                .args(["/C", "mklink", "/J"])
-                .arg(&boost_link)
-                .arg(&boost_target)
-                .status()
-                .expect("Failed to run mklink for boost junction");
-            assert!(status.success(), "mklink /J for boost junction failed");
+            link_boost_dir(&boost_link, &boost_target);
         }
         cfg.define("BOOST_ROOT", &boost_root);
         cfg.define("CMAKE_POLICY_DEFAULT_CMP0167", "OLD");
